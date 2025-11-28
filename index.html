@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="my">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Local Chess Trainer — 2 Player</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>Chess Trainer — 2-Player Local</h1>
+      <div class="controls">
+        <button id="btnNew">New Game</button>
+        <button id="btnUndo">Undo</button>
+        <button id="btnFlip">Flip Board</button>
+        <label><input id="toggleHints" type="checkbox" checked /> Show Hints</label>
+      </div>
+    </header>
+
+    <main>
+      <section id="left">
+        <div id="boardWrap">
+          <div id="board"></div>
+        </div>
+
+        <div id="statusBar">
+          <div id="moveHistory"><strong>Moves:</strong> <span id="movesText"></span></div>
+          <div id="gameState"><strong>State:</strong> <span id="stateText">Ready</span></div>
+        </div>
+      </section>
+
+      <aside id="right">
+        <div class="panel">
+          <h2>Move Info</h2>
+          <div id="selectedInfo">Click a piece to see legal moves and analysis.</div>
+          <div id="advText"></div>
+        </div>
+
+        <div class="panel">
+          <h2>Training</h2>
+          <div class="training-controls">
+            <button id="btnTactics">Tactics Drill</button>
+            <button id="btnOpenings">Openings Drill</button>
+            <button id="btnEndings">Endgame Drill</button>
+            <button id="btnClearDrill">Clear Drill</button>
+          </div>
+          <div id="drillArea">No drill loaded.</div>
+        </div>
+
+        <div class="panel">
+          <h2>Quick Tips</h2>
+          <ul>
+            <li>Control center (e4,d4,e5,d5).</li>
+            <li>Develop knights before bishops.</li>
+            <li>Castle early for king safety.</li>
+            <li>Bishops are strong in open positions.</li>
+            <li>Knights love outposts (protected advanced squares).</li>
+          </ul>
+        </div>
+      </aside>
+    </main>
+
+    <footer>
+      <small>Built for local practice — basic evaluation (material + mobility + center control).</small>
+    </footer>
+  </div>
+
+  <!-- optional: Firebase realtime integration (add your config in app.js as described) -->
+  <script src="https://www.gstatic.com/firebasejs/9.24.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.24.0/firebase-database-compat.js"></script>
+
+  <!-- app script (after firebase scripts if using realtime) -->
+  <script src="app.js"></script>
+</body>
+</html>
