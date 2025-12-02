@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="my">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Chess Studio — Firebase Realtime</title>
+    <link rel="stylesheet" href="styles.css" />
+    <!-- Firebase (compat) - easier for quick setup -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
+  </head>
+  <body>
+    <div id="app" class="container">
+      <header>
+        <h1>Chess Studio — Firebase 2-player</h1>
+        <div id="user-info">Connecting...</div>
+      </header>
+
+      <main class="main-grid">
+        <section class="board-area">
+          <div id="board" class="board"></div>
+
+          <!-- <div class="controls">
+            <button id="btn-reset">Reset</button>
+            <button id="btn-undo">Undo</button>
+            <div id="turn-ind" class="info">Turn: —</div>
+          </div> -->
+        </section>
+
+        <aside class="panel">
+          <div class="panel-block">
+            <h3>Spare Pieces (Drag to board)</h3>
+            <div
+              id="spares-container"
+              class="piece-grid"
+              style="display: flex; flex-wrap: wrap; gap: 10px"
+            >
+              <!-- JS ကနေ ဒီထဲကို ကစားရုပ်တွေ လာထည့်ပါမယ် -->
+            </div>
+            <small
+              >Drag pieces from here to the board. Right-click on board to
+              remove a piece.</small
+            >
+            <br /><br />
+            <button id="btn-clear">Clear Board</button>
+            <button id="btn-start">Start Position</button>
+          </div>
+
+          <div class="panel-block">
+            <h3>Customize pieces</h3>
+            <div id="piece-grid" class="piece-grid"></div>
+            <small>Paste emoji or 1–2 character text for each piece.</small>
+          </div>
+
+          <div class="panel-block">
+            <h3>Board theme</h3>
+            <label>Light <input id="color-light" type="color" /></label>
+            <label>Dark <input id="color-dark" type="color" /></label>
+          </div>
+
+          <div class="panel-block">
+            <h3>Game Info</h3>
+            <div>
+              FEN:
+              <div id="fen" class="small mono">—</div>
+            </div>
+            <div id="game-status" class="small">—</div>
+          </div>
+        </aside>
+      </main>
+
+      <footer class="rules">
+        <strong>Rules (short):</strong>
+        <ul>
+          <li>Standard chess moves — validated by chess.js.</li>
+          <li>
+            Castling, en-passant, promotion are supported (promotion
+            auto-queen).
+          </li>
+          <li>
+            To play online: Create a room, share Room ID. First joiner becomes
+            White, second becomes Black. Extra joiners observe.
+          </li>
+        </ul>
+        <div class="small">
+          ⚠️ Replace firebaseConfig in <code>app.js</code> with your project's
+          config. For testing you can allow open Realtime DB rules but secure
+          them before production.
+        </div>
+      </footer>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
