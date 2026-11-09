@@ -1,437 +1,53 @@
-const firebaseConfig = {
-  apiKey: "AIzaSyA3Qv64SXZMejW9IX5ayzUFXuTlmZlFM8A",
-  authDomain: "chess-mm.firebaseapp.com",
-  projectId: "chess-mm",
-  storageBucket: "chess-mm.firebasestorage.app",
-  messagingSenderId: "875549272410",
-  appId: "1:875549272410:web:d7bb303a2f17cfa0a5eb63",
-  measurementId: "G-FDH4HE6L9T",
-};
-
-document.addEventListener('DOMContentLoaded', () => { initApp(); });
-
-function initApp() {
-    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
-    const auth = firebase.auth();
-    const db = firebase.database();
-
-    let chess;
-    if (typeof window.Chess === 'function') chess = new window.Chess();
-    else if (typeof Chess === 'function') chess = new Chess();
-    else return alert("Chess Library Missing!");
-    chess.clear();
-
-    // --- HTML Structure ---
-    document.body.innerHTML = `
-        <div class="game-container">
-            <!-- Game Over Modal -->
-            <div id="game-over-modal" class="modal-overlay">
-                <div class="modal-content">
-                    <h2 id="modal-title">GAME OVER</h2>
-                    <p id="modal-msg"></p>
-                    <button class="icon-btn close-btn" onclick="document.getElementById('game-over-modal').style.display='none'">Close</button>
-                </div>
-            </div>
-
-            <!-- Promotion Modal -->
-            <div id="promotion-modal" class="modal-overlay">
-                <div class="modal-content">
-                    <h3 style="color:#fff; margin-bottom:15px;">Promote to:</h3>
-                    <div class="promo-options" id="promo-options"></div>
-                </div>
-            </div>
-
-            <!-- Controls (Added Blind Button) -->
-            <div class="controls-bar">
-                <button id="btn-blind" class="icon-btn" style="background:#6c5ce7;">🙈 Blind</button>
-                <button id="btn-flip" class="icon-btn">🔄 Flip</button>
-                <button id="btn-undo" class="icon-btn">↩️ Undo</button>
-                <button id="btn-reset" class="icon-btn" style="background:#d63031;">⚠️ Reset</button>
-                <button id="btn-clear" class="icon-btn">🗑️ Clear</button>
-            </div>
-            
-            <div class="status-bar">
-                <span id="game-status" class="status-text">Setup Mode</span>
-                <span id="ai-advice" class="ai-text">AI: Loading...</span>
-            </div>
-
-            <div id="board" class="board"></div>
-            <div id="spares-area" class="spares-area"></div>
-
-            <div style="margin-top:10px; font-size:12px; color:#666; width:100%; text-align:center;">
-                <button id="btn-create" style="width:auto; padding:5px 10px;">Create Room</button>
-                <input id="input-room" placeholder="ID" style="width:80px; padding:5px; background:#222; border:1px solid #444; color:#fff;">
-                <button id="btn-join" style="width:auto; padding:5px 10px;">Join</button>
-                <br>Room: <span id="room-id" style="color:#aaa;">—</span>
-            </div>
-        </div>
-    `;
-
-    const boardEl = document.getElementById('board');
-    const sparesEl = document.getElementById('spares-area');
-    const statusEl = document.getElementById('game-status');
-    const aiEl = document.getElementById('ai-advice');
-    
-    // Modals
-    const gameOverModal = document.getElementById('game-over-modal');
-    const modalTitle = document.getElementById('modal-title');
-    const modalMsg = document.getElementById('modal-msg');
-    
-    const promoModal = document.getElementById('promotion-modal');
-    const promoOptions = document.getElementById('promo-options');
-
-    let selectedSquare = null;
-    let possibleMoves = [];
-    let isFlipped = false;
-    let isBlind = false; // New State
-    let bestMove = null;
-    let stockfish = null;
-    let dragGhost = null; 
-    let activeDragData = null;
-    let pendingMove = null; 
-
-    const PIECE_SYMBOLS = { 
-        w: { p:'♟', r:'♜', n:'♞', b:'♝', q:'♛', k:'♚' },
-        b: { p:'♟', r:'♜', n:'♞', b:'♝', q:'♛', k:'♚' }
-    };
-
-    auth.signInAnonymously();
-
-    async function initStockfish() {
-        try {
-            const res = await fetch('https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.0/stockfish.js');
-            const blob = await res.blob();
-            stockfish = new Worker(URL.createObjectURL(blob));
-            stockfish.onmessage = (e) => {
-                if (e.data.startsWith('bestmove')) {
-                    const m = e.data.split(' ')[1];
-                    if (m && m !== '(none)') {
-                        bestMove = { from: m.substring(0,2), to: m.substring(2,4) };
-                        aiEl.textContent = `Hint: ${m}`;
-                        renderPieces(); 
-                    }
-                }
-            };
-            stockfish.postMessage('uci');
-            aiEl.textContent = "AI: Ready";
-        } catch(e) { aiEl.textContent = "AI: Offline"; }
-    }
-    function askAI() {
-        if(!stockfish) return;
-        bestMove = null;
-        if (chess.game_over()) { aiEl.textContent = "AI: Stopped"; return; }
-        stockfish.postMessage(`position fen ${chess.fen()}`);
-        stockfish.postMessage('go depth 15 movetime 3000');
-    }
-
-    const files = ['a','b','c','d','e','f','g','h'];
-    const ranks = [8,7,6,5,4,3,2,1];
-
-    function makeBoard() {
-        boardEl.innerHTML = '';
-        for (let r of ranks) {
-            for (let f of files) {
-                const sq = `${f}${r}`;
-                const div = document.createElement('div');
-                div.className = `square ${(f.charCodeAt(0)-97+r-1)%2===1 ? 'dark' : 'light'}`;
-                div.dataset.square = sq;
-                
-                div.addEventListener('click', onSquareClick);
-                div.addEventListener('contextmenu', (e) => { e.preventDefault(); chess.remove(sq); afterAction(); });
-                div.addEventListener('dragover', e => e.preventDefault());
-                div.addEventListener('drop', onDrop);
-
-                if (f === 'a') addCoord(div, r, 'coord-tl');
-                if (f === 'h') addCoord(div, r, 'coord-tr');
-                if (r === 8) addCoord(div, f, 'coord-tl');
-                if (r === 1) addCoord(div, f, 'coord-br');
-
-                boardEl.appendChild(div);
-            }
-        }
-    }
-    function addCoord(parent, text, cls) {
-        const c = document.createElement('div');
-        c.className = `coord-num ${cls}`; c.textContent = text;
-        parent.appendChild(c);
-    }
-
-    function renderPieces() {
-        updateStatus(); 
-        document.querySelectorAll('.square').forEach(div => {
-            const sq = div.dataset.square;
-            
-            Array.from(div.children).forEach(child => {
-                if (child.classList.contains('piece') || child.classList.contains('hint-dot') || child.classList.contains('capture-ring')) child.remove();
-            });
-            
-            div.classList.remove('selected', 'check', 'best-move'); 
-            if(selectedSquare === sq) div.classList.add('selected');
-            if(bestMove && (sq === bestMove.from || sq === bestMove.to)) div.classList.add('best-move');
-
-            const piece = chess.get(sq);
-            if(piece) {
-                const p = document.createElement('div');
-                p.className = `piece ${piece.color}`;
-                p.textContent = PIECE_SYMBOLS[piece.color][piece.type];
-                p.draggable = true;
-                p.addEventListener('dragstart', e => {
-                    e.dataTransfer.setData('json', JSON.stringify({source:'board', from:sq}));
-                    showHints(sq);
-                });
-                attachTouch(p, {source:'board', from:sq, type:piece.type, color:piece.color});
-                div.appendChild(p);
-                
-                if(piece.type === 'k' && piece.color === chess.turn() && chess.in_check()) {
-                    div.classList.add('check');
-                }
-            }
-
-            if(possibleMoves.includes(sq)) {
-                const h = document.createElement('div');
-                h.className = piece ? 'capture-ring' : 'hint-dot';
-                div.appendChild(h);
-            }
-        });
-    }
-
-    function renderSpares() {
-        sparesEl.innerHTML = '';
-        ['w', 'b'].forEach(c => {
-            const row = document.createElement('div');
-            row.className = 'spare-row';
-            ['p','n','b','r','q','k'].forEach(t => {
-                const p = document.createElement('div');
-                p.className = `piece ${c} spare-piece`;
-                p.textContent = PIECE_SYMBOLS[c][t];
-                p.draggable = true;
-                p.addEventListener('dragstart', e => {
-                    e.dataTransfer.setData('json', JSON.stringify({source:'spare', type:t, color:c}));
-                });
-                attachTouch(p, {source:'spare', type:t, color:c});
-                row.appendChild(p);
-            });
-            sparesEl.appendChild(row);
-        });
-    }
-
-    function attachTouch(el, data) {
-        el.addEventListener('touchstart', (e) => {
-            e.preventDefault();
-            const t = e.touches[0];
-            activeDragData = data;
-            dragGhost = document.createElement('div');
-            dragGhost.className = `piece ${data.color} dragging-ghost`;
-            dragGhost.textContent = PIECE_SYMBOLS[data.color][data.type];
-            dragGhost.style.left = t.clientX + 'px'; dragGhost.style.top = t.clientY + 'px';
-            document.body.appendChild(dragGhost);
-            if(data.source === 'board') showHints(data.from);
-        }, {passive: false});
-
-        el.addEventListener('touchmove', (e) => {
-            e.preventDefault();
-            if(dragGhost) {
-                const t = e.touches[0];
-                dragGhost.style.left = t.clientX + 'px'; dragGhost.style.top = t.clientY + 'px';
-            }
-        }, {passive: false});
-
-        el.addEventListener('touchend', (e) => {
-            e.preventDefault();
-            if(dragGhost) {
-                const t = e.changedTouches[0];
-                dragGhost.style.display = 'none';
-                const target = document.elementFromPoint(t.clientX, t.clientY);
-                dragGhost.remove(); dragGhost = null;
-                const sqDiv = target ? target.closest('.square') : null;
-                if(sqDiv && activeDragData) handleMove(activeDragData, sqDiv.dataset.square, true);
-                clearHints();
-                activeDragData = null;
-            }
-        });
-    }
-
-    function handleMove(data, to) {
-        if (data.source === 'spare') {
-            const targetPiece = chess.get(to);
-            if (targetPiece && !confirm("Replace piece?")) return;
-            chess.put({ type: data.type, color: data.color }, to);
-            afterAction();
-        } 
-        else if (data.source === 'board') {
-            const piece = chess.get(data.from);
-            if (piece && piece.type === 'p' && (to[1] === '8' || to[1] === '1')) {
-                const tempMove = chess.move({ from: data.from, to: to, promotion: 'q' });
-                if (tempMove) {
-                    chess.undo();
-                    pendingMove = { from: data.from, to: to, color: piece.color };
-                    showPromotionModal(piece.color);
-                    return;
-                }
-            }
-
-            const move = chess.move({ from: data.from, to: to, promotion: 'q' });
-            if (move) afterAction();
-            else renderPieces(); 
-        }
-    }
-
-    function showPromotionModal(color) {
-        promoOptions.innerHTML = '';
-        ['q', 'r', 'b', 'n'].forEach(type => {
-            const btn = document.createElement('div');
-            btn.className = `promo-btn piece ${color}`;
-            btn.style.position = 'static';
-            btn.textContent = PIECE_SYMBOLS[color][type];
-            btn.onclick = () => confirmPromotion(type);
-            promoOptions.appendChild(btn);
-        });
-        promoModal.style.display = 'flex';
-    }
-
-    function confirmPromotion(type) {
-        if (pendingMove) {
-            chess.move({ from: pendingMove.from, to: pendingMove.to, promotion: type });
-            afterAction();
-        }
-        promoModal.style.display = 'none';
-        pendingMove = null;
-    }
-
-    function onSquareClick(e) {
-        const sq = e.currentTarget.dataset.square;
-        const piece = chess.get(sq);
-        const isTurn = piece && piece.color === chess.turn();
-
-        if (selectedSquare === sq) { clearHints(); return; }
-
-        if (selectedSquare) {
-            const sourcePiece = chess.get(selectedSquare);
-            if (sourcePiece && sourcePiece.type === 'p' && (sq[1] === '8' || sq[1] === '1')) {
-                const tempMove = chess.move({ from: selectedSquare, to: sq, promotion: 'q' });
-                if(tempMove) {
-                    chess.undo();
-                    pendingMove = { from: selectedSquare, to: sq, color: sourcePiece.color };
-                    showPromotionModal(sourcePiece.color);
-                    clearHints();
-                    return;
-                }
-            }
-
-            const move = chess.move({ from: selectedSquare, to: sq, promotion: 'q' });
-            if (move) { afterAction(); clearHints(); return; }
-            if (isTurn) { showHints(sq); return; }
-            clearHints();
-        } else if (isTurn) {
-            showHints(sq);
-        }
-    }
-
-    function onDrop(e) {
-        e.preventDefault();
-        const data = JSON.parse(e.dataTransfer.getData('json'));
-        const sq = e.currentTarget.dataset.square;
-        handleMove(data, sq);
-    }
-
-    function afterAction() {
-        renderPieces();
-        askAI();
-        const rid = document.getElementById('room-id').textContent;
-        if(rid !== '—') db.ref(`rooms/${rid}`).update({fen: chess.fen()});
-    }
-
-    function showHints(sq) {
-        possibleMoves = chess.moves({square:sq, verbose:true}).map(m=>m.to);
-        selectedSquare = sq;
-        renderPieces();
-    }
-    function clearHints() { selectedSquare=null; possibleMoves=[]; renderPieces(); }
-
-    function updateStatus() {
-        const boardArr = chess.board();
-        let wK = false, bK = false;
-        boardArr.forEach(row => row.forEach(p => {
-            if(p && p.type === 'k') {
-                if(p.color === 'w') wK = true;
-                if(p.color === 'b') bK = true;
-            }
-        }));
-
-        if (!wK || !bK) {
-            statusEl.textContent = "Setup Mode (Place Kings)";
-            statusEl.classList.remove('alert');
-            return;
-        }
-
-        let t = chess.turn()==='w' ? "White" : "Black";
-        let status = `${t}'s Turn`;
-        statusEl.className = "status-text"; 
-
-        if (chess.in_checkmate()) {
-            status = `CHECKMATE! ${t === "White" ? "Black" : "White"} Wins!`;
-            showGameOver(status);
-            statusEl.classList.add('alert');
-        } 
-        else if (chess.in_stalemate()) {
-            status = "Stalemate (Draw)!";
-            showGameOver(status);
-        }
-        else if (chess.in_draw()) {
-            status = "Draw / Insufficient Material";
-        } 
-        else if (chess.in_check()) {
-            status = `${t} is in CHECK!`;
-            statusEl.classList.add('alert');
-        }
-
-        statusEl.textContent = status;
-    }
-
-    function showGameOver(msg) {
-        modalTitle.textContent = "GAME OVER";
-        modalMsg.textContent = msg;
-        gameOverModal.style.display = 'flex';
-    }
-
-    // Buttons
-    document.getElementById('btn-flip').onclick = () => { isFlipped=!isFlipped; boardEl.className=isFlipped?'board flipped':'board'; };
-    document.getElementById('btn-undo').onclick = () => { chess.undo(); afterAction(); gameOverModal.style.display='none'; };
-    document.getElementById('btn-reset').onclick = () => { chess.reset(); afterAction(); gameOverModal.style.display='none'; };
-    document.getElementById('btn-clear').onclick = () => { chess.clear(); afterAction(); gameOverModal.style.display='none'; };
-    
-    // BLIND BUTTON LOGIC
-    const blindBtn = document.getElementById('btn-blind');
-    blindBtn.onclick = () => {
-        isBlind = !isBlind;
-        if(isBlind) {
-            boardEl.classList.add('blindfold');
-            blindBtn.textContent = '👁️ Show';
-            blindBtn.style.background = '#444';
-        } else {
-            boardEl.classList.remove('blindfold');
-            blindBtn.textContent = '🙈 Blind';
-            blindBtn.style.background = '#6c5ce7';
-        }
-    };
-
-    document.getElementById('btn-create').onclick = async () => {
-        const ref = db.ref('rooms').push();
-        chess.reset(); await ref.set({fen:chess.fen()});
-        document.getElementById('input-room').value = ref.key;
-        joinRoom(ref.key);
-    };
-    document.getElementById('btn-join').onclick = () => joinRoom(document.getElementById('input-room').value);
-
-    function joinRoom(id) {
-        if(!id) return;
-        document.getElementById('room-id').textContent = id;
-        db.ref(`rooms/${id}`).on('value', s => {
-            if(s.val() && s.val().fen !== chess.fen()) {
-                chess.load(s.val().fen); renderPieces(); askAI();
-            }
-        });
-    }
-
-    makeBoard(); renderSpares(); renderPieces(); initStockfish();
-}
+/* iChess Studio: standalone Firebase Hosting app. chess.js 0.10.x required. */
+(()=>{'use strict';
+const config={apiKey:'AIzaSyA3Qv64SXZMejW9IX5ayzUFXuTlmZlFM8A',authDomain:'chess-mm.firebaseapp.com',databaseURL:'https://chess-mm-default-rtdb.firebaseio.com',projectId:'chess-mm',storageBucket:'chess-mm.firebasestorage.app',messagingSenderId:'875549272410',appId:'1:875549272410:web:d7bb303a2f17cfa0a5eb63'};
+const $=id=>document.getElementById(id),chess=new Chess(),files='abcdefgh',icons={w:{k:'♔',q:'♕',r:'♖',b:'♗',n:'♘',p:'♙'},b:{k:'♚',q:'♛',r:'♜',b:'♝',n:'♞',p:'♟'}};
+const lessons=[
+['1. Meet the board','Chess has 64 squares. White begins at ranks 1–2 and Black at ranks 7–8. Files run a–h and ranks 1–8. White moves first. The goal is to checkmate the opposing king.','Try: locate e4, d4, e5 and d5 — the four center squares.'],
+['2. Pawn moves','Pawns move forward one square (or two from their starting rank if clear), but capture one square diagonally. They never move backward. On the last rank, promote to a queen, rook, bishop or knight.','Try: start with e2–e4. En passant is a special capture immediately after an opposing pawn advances two squares.'],
+['3. Rook, bishop and queen','Rooks travel along ranks or files. Bishops travel diagonally and remain on the same color. Queens combine rook and bishop moves. None can jump over other pieces.','Try: click a rook, bishop or queen to see legal moves.'],
+['4. Knights and kings','Knights move in an L shape (two squares then one perpendicular) and can jump. Kings move one square in any direction but never into check.','Try: move g1–f3. Knights can jump over pawns.'],
+['5. Check, checkmate and stalemate','Check means the king is attacked. You must escape by moving the king, blocking the attack or capturing the attacker. Checkmate ends the game. Stalemate is a draw when a player has no legal move but is not in check.','Try: always ask whether your king is safe before moving.'],
+['6. Castling and special rules','Castling moves the king two squares toward a rook, then places that rook beside the king. Neither piece may have moved; the path must be clear; the king may not castle out of, through or into check. Other draws include repetition, insufficient material and the fifty-move rule.','Try: develop your knights and bishops before castling.'],
+['7. Opening principles','Control the center, develop knights and bishops, castle early and avoid moving the same piece repeatedly without a reason. Do not bring your queen out too early.','Practice: 1.e4 e5 2.Nf3 Nc6 3.Bc4 — the Italian Game.'],
+['8. Opening: Queen’s Gambit','After 1.d4 d5 2.c4, White challenges Black’s central pawn. The aim is positional pressure, not a quick queen attack.','Practice: 1.d4 d5 2.c4 e6 3.Nc3 Nf6.'],
+['9. Tactics: forks and pins','A fork attacks two pieces at once. A pin restricts a piece because moving it would expose something more valuable. Skewers attack a valuable piece in front of a less valuable one.','Practice: inspect knight moves for forks against king and queen.'],
+['10. Tactics: captures and threats','Before every move check: Checks, Captures, Threats (CCT). Look for undefended pieces and calculate what your opponent can capture in reply.','Practice: after each move, pause and identify your opponent’s strongest threat.'],
+['11. Endgame: king and pawn','In endgames the king becomes active. Opposition means kings face each other with one square between them; it helps determine who can advance. Passed pawns are valuable because no enemy pawn can stop them on their file or adjacent files.','Practice: advance your king ahead of your pawn when safe.'],
+['12. Endgame: basic mates','King and queen versus king: use your queen to restrict space and bring your king closer. King and rook versus king uses a similar box technique. Avoid stalemate when the opposing king has no legal move.','Practice: learn to recognize checkmate versus stalemate.'],
+['13. Intermediate planning','Evaluate king safety, material, pawn structure, piece activity and open files. Improve your worst-placed piece. Create a plan, but recalculate after each opponent move.','Practice: choose a target weakness and improve one piece to attack it.'],
+['14. Study routine','Play a slow game, record your moves, find the first major mistake, replay the position and solve related tactics. Aim for accuracy, not only winning.','Practice: play a full game against Easy, then Medium, reviewing every lost piece.']
+];
+let mode='ai',level='medium',selected=null,targets=[],flipped=false,thinking=false,roomRef=null,roomId='',myColor=null,uid='',onlineVersion=0,ended=false,token=0,latestHint=null;
+let auth=null,db=null;let previousGameSound='';
+try{if(window.firebase){if(!firebase.apps.length)firebase.initializeApp(config);auth=firebase.auth();db=firebase.database();auth.signInAnonymously().then(x=>{uid=x.user.uid;$('connection').textContent='Online ready';}).catch(()=>{$('connection').textContent='Online sign-in unavailable';});}}catch(e){console.warn(e)}
+function pieceImage(p){const img=document.createElement('img');img.className='piece';img.alt=(p.color==='w'?'White ':'Black ')+({p:'pawn',n:'knight',b:'bishop',r:'rook',q:'queen',k:'king'}[p.type]);img.draggable=true;img.src=`pieces/${p.color}${p.type}.png`;img.onerror=()=>{const fallback=document.createElement('span');fallback.className='piece-fallback '+(p.color==='w'?'white-piece':'black-piece');fallback.textContent=icons[p.color][p.type];img.replaceWith(fallback)};return img}
+function canPlay(){return !thinking&&!chess.game_over()&&(mode!=='online'||(roomRef&&myColor===chess.turn()))&&(mode!=='ai'||chess.turn()==='w')}
+function draw(){if(window.iChessSound){const h=chess.history({verbose:true});if(h.length>window.iChessSound.lastCount){window.iChessSound.play(h.at(-1));}window.iChessSound.lastCount=h.length;}const board=$('board');board.replaceChildren();const fs=flipped?[...files].reverse():[...files],rs=flipped?[1,2,3,4,5,6,7,8]:[8,7,6,5,4,3,2,1];const history=chess.history({verbose:true}),last=history.at(-1);for(let ri=0;ri<8;ri++)for(let fi=0;fi<8;fi++){const sq=fs[fi]+rs[ri],piece=chess.get(sq),el=document.createElement('div');el.className='square '+((fi+ri)%2?'dark':'light');el.dataset.square=sq;el.setAttribute('role','gridcell');el.setAttribute('aria-label',sq+(piece?' '+piece.color+piece.type:''));if(sq===selected)el.classList.add('selected');if(last&&(last.from===sq||last.to===sq))el.classList.add('last');if(targets.includes(sq))el.classList.add(piece?'capture':'target');if(piece&&piece.type==='k'&&piece.color===chess.turn()&&chess.in_check())el.classList.add('check');if(fi===0){const c=document.createElement('span');c.className='coord';c.textContent=rs[ri];el.append(c)}if(piece){const img=pieceImage(piece);img.addEventListener('dragstart',e=>{if(!canPlay()||piece.color!==chess.turn()){e.preventDefault();return}e.dataTransfer.setData('text/plain',sq);select(sq)});el.append(img)}el.addEventListener('click',()=>click(sq));el.addEventListener('dragover',e=>e.preventDefault());el.addEventListener('drop',e=>{e.preventDefault();const from=e.dataTransfer.getData('text/plain');if(from)attempt(from,sq)});board.append(el)}const side=chess.turn()==='w'?'White':'Black';let msg=side+' to move';if(chess.in_checkmate())msg='Checkmate! '+(side==='White'?'Black':'White')+' wins';else if(chess.in_stalemate())msg='Stalemate — draw';else if(chess.in_draw())msg='Draw';else if(chess.in_check())msg=side+' in check!';if(thinking)msg='Computer thinking…';$('status').textContent=msg;const moves=chess.history();$('move-list').textContent=moves.length?moves.map((m,i)=>(i%2===0?`${Math.floor(i/2)+1}. `:'')+m).join('  '):'No moves yet';$('undo').disabled=mode==='online'||thinking||!moves.length;$('hint').disabled=mode==='online'||thinking||chess.game_over();if(chess.game_over()&&!ended){ended=true;if(window.iChessSound)window.iChessSound.event(chess.in_checkmate()?'win':'draw');showNotice('Game finished',msg)}}
+function select(sq){selected=sq;targets=chess.moves({square:sq,verbose:true}).map(m=>m.to);draw()}
+function click(sq){if(!canPlay()){if(thinking)$('connection').textContent='Computer is thinking…';return;}const p=chess.get(sq);if(selected&&targets.includes(sq)){attempt(selected,sq);return}if(p&&p.color===chess.turn()){if(selected===sq){selected=null;targets=[];draw()}else select(sq)}else{selected=null;targets=[];draw()}}
+function askPromotion(color){return new Promise(resolve=>{const dialog=$('promotion'),box=$('promotion-options');box.replaceChildren();for(const t of ['q','r','b','n']){const b=document.createElement('button');b.textContent=icons[color][t];b.onclick=()=>{dialog.close();resolve(t)};box.append(b)}dialog.oncancel=e=>{e.preventDefault();dialog.close();resolve(null)};dialog.showModal()})}
+async function attempt(from,to){if(!canPlay())return;const p=chess.get(from);if(!p||p.color!==chess.turn())return;let promotion='q';if(p.type==='p'&&(to[1]==='8'||to[1]==='1')){promotion=await askPromotion(p.color);if(!promotion)return}if(!canPlay())return;const oldFen=chess.fen(),move=chess.move({from,to,promotion});if(!move)return;selected=null;targets=[];latestHint=null;if(mode==='online'){const nextFen=chess.fen();chess.load(oldFen);const expected=onlineVersion;try{const result=await roomRef.transaction(data=>{if(!data||data.version!==expected||data.fen!==oldFen||data.turn!==myColor||data.players?.[myColor]!==uid)return;return {...data,fen:nextFen,turn:myColor==='w'?'b':'w',version:expected+1,updatedAt:firebase.database.ServerValue.TIMESTAMP}},undefined,false);if(!result.committed){$('connection').textContent='Move rejected; syncing…';await roomRef.once('value').then(s=>sync(s.val()))}}catch(e){$('connection').textContent='Move failed: '+e.message}return}draw();if(mode==='ai'&&!chess.game_over())computerTurn()}
+// Bounded, cooperative computer engine: never runs a deep synchronous search.
+const values={p:100,n:320,b:335,r:500,q:900,k:20000};
+function evaluate(){let score=0;const board=chess.board();for(let r=0;r<8;r++)for(let c=0;c<8;c++){const p=board[r][c];if(!p)continue;let v=values[p.type];if(p.type==='p')v+=(p.color==='w'?6-r:r-1)*7;if(p.type==='n'||p.type==='b')v+=(3.5-Math.abs(3.5-c))*5;score+=(p.color==='b'?1:-1)*v}return score}
+function rankMove(move,side){const captured=move.captured?values[move.captured]:0;const promo=move.promotion?values[move.promotion]-100:0;const center=(3.5-Math.abs(3.5-files.indexOf(move.to[0])))*4;return captured*8+promo*3+center+(move.flags.includes('k')||move.flags.includes('q')?30:0)}
+function evaluateCandidate(move,side,levelName){const start=chess.fen();let score=-Infinity;try{if(!chess.move({from:move.from,to:move.to,promotion:move.promotion||'q'}))return -Infinity;score=evaluate()*(side==='b'?1:-1);if(chess.in_checkmate())return 1000000;if(chess.in_draw())return -100;score+=chess.in_check()?45:0;const replies=chess.moves({verbose:true});if(levelName==='difficult'||levelName==='advanced'){// A bounded opponent reply search; no exponential recursive tree.
+let worst=Infinity;const ordered=replies.sort((a,b)=>rankMove(b,side)-rankMove(a,side)).slice(0,levelName==='advanced'?24:12);for(const reply of ordered){const replyFen=chess.fen();try{if(!chess.move({from:reply.from,to:reply.to,promotion:reply.promotion||'q'}))continue;const replyScore=chess.in_checkmate()?-1000000:evaluate()*(side==='b'?1:-1);worst=Math.min(worst,replyScore)}finally{chess.load(replyFen)}}if(worst!==Infinity)score=score*.25+worst*.75}else if(levelName==='medium'){let danger=0;for(const reply of replies)if(reply.captured)danger=Math.max(danger,values[reply.captured]);score-=danger*.6}return score+rankMove(move,side)*.08}finally{chess.load(start)}}
+function chooseMove(forHint=false){const moves=chess.moves({verbose:true});if(!moves.length)return null;const side=chess.turn(),effective=forHint?'medium':level;if(effective==='easy'&&!forHint)return moves[Math.floor(Math.random()*moves.length)];let best=-Infinity,choice=moves[0];for(const m of moves){const score=evaluateCandidate(m,side,effective)+(Math.random()-.5)*(effective==='medium'?20:2);if(score>best){best=score;choice=m}}return choice}
+function computerTurn(){if(mode!=='ai'||chess.turn()!=='b'||chess.game_over())return;thinking=true;const t=++token;draw();const originalFen=chess.fen();setTimeout(()=>{if(t!==token||mode!=='ai')return;try{let move=null;try{move=chooseMove()}catch(err){console.error('AI evaluation failed, using safe move',err);chess.load(originalFen)}if(t!==token||mode!=='ai')return;if(chess.fen()!==originalFen)chess.load(originalFen);const legal=chess.moves({verbose:true});if(!legal.length)return;let candidate=move&&legal.find(m=>m.from===move.from&&m.to===move.to&&(!m.promotion||m.promotion===(move.promotion||'q')));if(!candidate)candidate=legal[0];const played=chess.move({from:candidate.from,to:candidate.to,promotion:candidate.promotion||'q'});if(!played)throw new Error('Computer could not apply a legal move');$('connection').textContent='Computer played '+played.san}catch(e){console.error('Computer move failed',e);chess.load(originalFen);try{const fallback=chess.moves({verbose:true})[0];if(fallback){const played=chess.move({from:fallback.from,to:fallback.to,promotion:fallback.promotion||'q'});$('connection').textContent='Computer played '+played.san+' (fallback)'}else $('connection').textContent='No legal computer moves'}catch(failure){console.error(failure);$('connection').textContent='Computer error — start a new game'}}finally{thinking=false;draw()}},120)}
+function showNotice(title,message){$('notice-title').textContent=title;$('notice-body').textContent=message;if(!$('notice').open)$('notice').showModal()}
+function reset(){if(window.iChessSound)window.iChessSound.lastCount=0;token++;thinking=false;ended=false;selected=null;targets=[];latestHint=null;chess.reset();draw();if(mode==='online')leaveRoom()}
+function leaveRoom(){if(roomRef){roomRef.off();roomRef=null}roomId='';myColor=null;onlineVersion=0;$('room-message').textContent='Create a room or join with an invite ID.'}
+function sync(data){if(!data||!data.fen)return;onlineVersion=data.version||0;if(chess.fen()!==data.fen){if(!chess.load(data.fen))return;selected=null;targets=[];ended=false}myColor=data.players?.w===uid?'w':data.players?.b===uid?'b':null;$('room-message').textContent=`Room: ${roomId} • You: ${myColor==='w'?'White':myColor==='b'?'Black':'Spectator'} • ${data.players?.b?'Two players':'Waiting for Black'}`;$('connection').textContent='Connected';draw()}
+function watch(id){leaveRoom();roomId=id;roomRef=db.ref('rooms/'+id);roomRef.on('value',s=>{if(!s.exists()){$('connection').textContent='Room not found';return}sync(s.val())},e=>$('connection').textContent=e.message)}
+async function readyOnline(){if(!db||!auth){showNotice('Firebase unavailable','Check Firebase scripts and network.');return false}try{const user=auth.currentUser||await auth.signInAnonymously().then(r=>r.user);uid=user.uid;return true}catch(e){showNotice('Sign-in failed',e.message+' Enable Anonymous Authentication in Firebase Console.');return false}}
+$('create').onclick=async()=>{if(!await readyOnline())return;try{const ref=db.ref('rooms').push();const data={fen:new Chess().fen(),turn:'w',version:0,players:{w:uid},createdAt:firebase.database.ServerValue.TIMESTAMP};await ref.set(data);$('room-input').value=ref.key;watch(ref.key)}catch(e){showNotice('Room creation failed',e.message)}};
+$('join').onclick=async()=>{if(!await readyOnline())return;const id=$('room-input').value.trim();if(!/^[\w-]{8,40}$/.test(id)){showNotice('Invalid room ID','Paste a valid room ID.');return}const ref=db.ref('rooms/'+id);try{const result=await ref.transaction(data=>{if(!data)return;if(data.players?.w===uid||data.players?.b===uid)return data;if(data.players?.b)return data;return {...data,players:{...data.players,b:uid}}},undefined,false);if(!result.snapshot.exists()){showNotice('Room not found','Ask the host for a valid ID.');return}watch(id)}catch(e){showNotice('Could not join',e.message)}};
+$('copy').onclick=async()=>{if(!roomId)return;const invite=location.origin+location.pathname+'?room='+encodeURIComponent(roomId);try{await navigator.clipboard.writeText(invite);$('connection').textContent='Invite copied'}catch(e){$('room-message').textContent='Invite: '+invite}};
+$('mode').onchange=()=>{mode=$('mode').value;$('level-wrap').hidden=mode!=='ai';$('room-panel').hidden=mode!=='online';reset();$('connection').textContent=mode==='online'?'Create or join a room':'Ready'};
+$('level').onchange=()=>level=$('level').value;$('new').onclick=reset;$('reset').onclick=()=>{if(mode==='online'){showNotice('Online game','Restart is disabled in shared rooms. Create a new room instead.');return}reset()};$('flip').onclick=()=>{flipped=!flipped;draw()};$('undo').onclick=()=>{if(mode==='online'||thinking)return;token++;chess.undo();if(mode==='ai'&&chess.history().length)chess.undo();ended=false;selected=null;targets=[];draw()};$('hint').onclick=()=>{if(mode==='ai'&&chess.turn()==='b'&&!thinking){computerTurn();return}if(mode==='online'||thinking||chess.game_over())return;try{const m=chooseMove(true);if(m){$('connection').textContent=`Hint: ${m.from} → ${m.to}`;select(m.from)}}catch(e){console.error('Hint failed',e);$('connection').textContent='Hint unavailable — retry'}};
+$('fullscreen').onclick=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen()}catch(e){$('connection').textContent='Fullscreen unavailable on this browser'}};$('notice-close').onclick=()=>$('notice').close();
+let lessonIndex=0;function showLesson(){const l=lessons[lessonIndex];$('lesson').value=lessonIndex;$('lesson-title').textContent=l[0];$('lesson-body').replaceChildren();for(const text of [l[1],l[2]]){const p=document.createElement('p');p.textContent=text;$('lesson-body').append(p)}$('previous').disabled=lessonIndex===0;$('next').disabled=lessonIndex===lessons.length-1}lessons.forEach((l,i)=>{const o=document.createElement('option');o.value=i;o.textContent=l[0];$('lesson').append(o)});$('lesson').onchange=()=>{lessonIndex=Number($('lesson').value);showLesson()};$('previous').onclick=()=>{lessonIndex=Math.max(0,lessonIndex-1);showLesson()};$('next').onclick=()=>{lessonIndex=Math.min(lessons.length-1,lessonIndex+1);showLesson()};document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t===b));$('guide').hidden=b.dataset.tab!=='guide';$('tips').hidden=b.dataset.tab!=='tips'});
+showLesson();draw();const invited=new URLSearchParams(location.search).get('room');if(invited&&/^[\w-]{8,40}$/.test(invited)){$('mode').value='online';$('mode').onchange();$('room-input').value=invited;$('join').click()}
+})();

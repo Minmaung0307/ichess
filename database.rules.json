@@ -1,0 +1,11 @@
+{
+  "rules": {
+    "rooms": {
+      "$roomId": {
+        ".read": "auth != null",
+        ".write": "auth != null && ((!data.exists() && newData.child('players/w').val() === auth.uid && newData.child('version').val() === 0) || (data.exists() && newData.exists() && ((data.child('players/w').val() === auth.uid || data.child('players/b').val() === auth.uid) && newData.child('version').val() === data.child('version').val() + 1 && newData.child('players').val() === data.child('players').val() && newData.child('turn').val() !== data.child('turn').val() || (!data.child('players/b').exists() && newData.child('players/w').val() === data.child('players/w').val() && newData.child('players/b').val() === auth.uid && newData.child('fen').val() === data.child('fen').val() && newData.child('version').val() === data.child('version').val()))))",
+        ".validate": "newData.hasChildren(['fen','turn','version','players']) && newData.child('fen').isString() && newData.child('fen').val().length <= 120 && (newData.child('turn').val() === 'w' || newData.child('turn').val() === 'b') && newData.child('version').isNumber()"
+      }
+    }
+  }
+}
