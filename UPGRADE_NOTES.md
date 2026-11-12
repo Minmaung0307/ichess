@@ -12,3 +12,11 @@ Run `firebase deploy --only hosting` from the `ichess` directory after testing l
 
 ## Limitations
 This is a first interactive curriculum, not a complete professional chess course. Lessons do not yet include narration, video export, evaluation-based coaching, spaced repetition, or progress sync. Online multiplayer has not been end-to-end tested in this environment.
+
+
+## Refresh stability update
+- All buttons explicitly use type=button to avoid implicit form submissions.
+- The local match is saved in localStorage after board updates and restored on page load, including the move history and AI turn.
+- New Game resets the board in-place, without navigation.
+- Service worker updates no longer call skipWaiting/clients.claim, so an updated worker will not take control mid-game.
+- No explicit location.reload is used in the app. Browser/hosting reloads cannot be fully prevented by site code, but game recovery protects progress.
