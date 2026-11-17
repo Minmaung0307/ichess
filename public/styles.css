@@ -57,3 +57,12 @@ header{flex-wrap:wrap}#sound-toggle{margin-left:auto}.academy{margin-top:18px;bo
 @media(max-width:380px){.app{padding:5px}.board-wrap{width:min(calc(100vw - 10px),calc(100dvh - 194px))}.setup #new{min-width:78px}.brand{font-size:15px}header button{padding:5px;font-size:10px}}
 @media(max-width:850px) and (max-height:620px){.board-wrap{width:min(calc(100vw - 18px),calc(100dvh - 185px))}.moves{display:none}}
 @media(max-width:850px) and (orientation:landscape){.board-wrap{width:min(calc(100vw - 20px),calc(100dvh - 125px))}.moves{display:none}.setup{flex-wrap:nowrap}.setup #new{flex:0 0 auto}}
+
+/* Stable layout: keep the 64 board squares mounted between moves. */
+.board{contain:layout paint;overflow:hidden;}
+.board-wrap{contain:layout;flex-shrink:0;}
+.square{contain:layout paint;}
+.status{min-height:40px;overflow:hidden;}
+#status{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+#move-list{overflow-anchor:none;}
+@media(max-width:850px){.status{min-height:32px;height:32px}.board-wrap{flex-shrink:0}}
